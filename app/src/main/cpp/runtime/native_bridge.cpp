@@ -10,6 +10,7 @@
 #include <string>
 
 #include "anxdoid_common.h"
+#include "../launcher/process_launcher.h"
 
 namespace {
     std::mutex g_state_mutex;
@@ -134,17 +135,46 @@ Java_com_anxdoid_runtime_core_NativeBridge_startGuestRuntime(
 
     LOGI("Preparing to start Userspace ARM64 Guest Runtime...");
 
-    // Check if rootfs directory exists
     std::string rootfs_system = g_config.system_dir;
     if (access(rootfs_system.c_str(), F_OK) != 0) {
         LOGW("Rootfs system directory not found at: %s", rootfs_system.c_str());
         LOGW("Please extract an ARM64 AOSP GSI into rootfs to launch full Android.");
-        // For testing/proof-of-concept milestone: simulate ready state
-        return 1001; // Mock PID indicating system ready
+        return -2;
     }
 
-    // In Milestone 2, we execute the real Linker Trampoline here.
-    return 1001;
+    // Determine target binary: priority app_process64 -> sh -> toybox
+    std::string target_bin = "/system/bin/app_process64";
+    if (access((g_config.rootfs_dir + target_bin).c_str(), F_OK) != 0) {
+        target_bin = "/system/bin/sh";
+        if (access((g_config.rootfs_dir + target_bin).c_str(), F_OK) != 0) {
+            target_bin = "/system/bin/toybox";
+        }
+    }
+
+    anxdoid::LaunchConfig launch_cfg;
+    launch_cfg.rootfs_dir = g_config.rootfs_dir;
+    launch_cfg.target_binary = target_bin;
+    launch_cfg.shim_library_path = g_config.base_dir + "/lib/libanxdoid_shim.so";
+
+    if (target_bin == "/system/bin/app_process64") {
+        launch_cfg.args = {
+            "/system/bin",
+            "--application",
+            "--nice-name=anxdoid_system_server",
+            "com.android.server.SystemServer"
+        };
+    }
+
+    std::string err;
+    pid_t pid = anxdoid::ProcessLauncher::launch(launch_cfg, &err);
+    if (pid > 0) {
+        g_guest_pid = pid;
+        LOGI("Guest runtime successfully launched with PID: %d", pid);
+        return pid;
+    } else {
+        LOGE("Failed to launch guest runtime: %s", err.c_str());
+        return -1;
+    }
 }
 
 JNIEXPORT jboolean JNICALL

@@ -1,4 +1,4 @@
-name: Build Anxdoid Runtime
+name: Build and Verify Anxdoid Runtime
 
 on:
   push:
@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build ARM64 Android APK & Native Engine
+  build-apk:
+    name: Build ARM64 APK & Package
     runs-on: ubuntu-latest
 
     steps:
@@ -43,3 +43,54 @@ jobs:
           name: anxdoid-runtime-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+  test-arm64-sandbox:
+    name: Test ARM64 Trampoline & Shadow Shim in QEMU
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Android SDK & NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK (r26c), CMake, and QEMU-user
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static binfmt-support
+
+      - name: Locate NDK Directory
+        id: find-ndk
+        run: |
+          NDK_PATH=$(find $ANDROID_HOME/ndk -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
+          echo "NDK_PATH=$NDK_PATH" >> $GITHUB_ENV
+          echo "Found NDK at: $NDK_PATH"
+
+      - name: Cross-Compile Native ARM64 Test Binaries
+        run: |
+          cmake -B build-arm64 -S app/src/main/cpp \
+            -DCMAKE_TOOLCHAIN_FILE=$NDK_PATH/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-28 \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-arm64 --verbose
+
+      - name: Setup Mock AOSP ARM64 Rootfs
+        run: |
+          mkdir -p test_rootfs/system/bin test_rootfs/system/lib64 test_rootfs/system/etc test_rootfs/data
+          echo "ro.product.model=Anxdoid Virtual ARM64" > test_rootfs/system/build.prop
+          echo "ro.build.version.release=10" >> test_rootfs/system/build.prop
+          cp build-arm64/guest_payload test_rootfs/system/bin/guest_payload
+          chmod +x test_rootfs/system/bin/guest_payload
+
+      - name: Execute ARM64 Native Sandbox Test
+        run: |
+          SYSROOT="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          qemu-aarch64-static -L "$SYSROOT" \
+            ./build-arm64/anxdoid_test_runner \
+            --rootfs "$(pwd)/test_rootfs" \
+            --shim "$(pwd)/build-arm64/libanxdoid_shim.so" \
+            --exec /system/bin/guest_payload
