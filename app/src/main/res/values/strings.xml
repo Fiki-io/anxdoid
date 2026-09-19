@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Anxdoid Runtime</string>
+    <string name="status_initializing">Initializing Userspace ARM64 Engine…</string>
+    <string name="status_ready">Runtime Ready. Waiting for ROM extraction.</string>
+    <string name="btn_boot">Start Guest Android</string>
+    <string name="btn_reset">Purge Guest Data</string>
+</resources>
