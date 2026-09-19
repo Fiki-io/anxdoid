@@ -118,6 +118,22 @@ void init_shim() {
 
 } // namespace anxdoid
 
+static inline bool open_needs_mode(int flags) {
+#ifdef O_TMPFILE
+    return (flags & O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE);
+#else
+    return (flags & O_CREAT) != 0;
+#endif
+}
+
+#ifndef SYS_fstatat
+#  if defined(__NR_newfstatat)
+#    define SYS_fstatat __NR_newfstatat
+#  elif defined(__NR_fstatat64)
+#    define SYS_fstatat __NR_fstatat64
+#  endif
+#endif
+
 // ============================================================================
 // Libc Intercepted Functions (Path Redirection)
 // ============================================================================
@@ -128,7 +144,7 @@ __attribute__((visibility("default")))
 int open(const char* pathname, int flags, ...) {
     ensure_init();
     mode_t mode = 0;
-    if (__OPEN_NEEDS_MODE(flags)) {
+    if (open_needs_mode(flags)) {
         va_list args;
         va_start(args, flags);
         mode = static_cast<mode_t>(va_arg(args, int));
@@ -143,7 +159,7 @@ __attribute__((visibility("default")))
 int openat(int dirfd, const char* pathname, int flags, ...) {
     ensure_init();
     mode_t mode = 0;
-    if (__OPEN_NEEDS_MODE(flags)) {
+    if (open_needs_mode(flags)) {
         va_list args;
         va_start(args, flags);
         mode = static_cast<mode_t>(va_arg(args, int));
