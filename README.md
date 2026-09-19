@@ -1,6 +1,6 @@
 # Anxdoid: Userspace Android-in-Android ARM64 Runtime
 
-[![Build Anxdoid Runtime](https://github.com/OWNER/REPOSITORY/actions/workflows/build.yml/badge.svg)](https://github.com/OWNER/REPOSITORY/actions/workflows/build.yml)
+[![Build and Verify Anxdoid Runtime](https://github.com/Fiki-io/anxdoid/actions/workflows/build.yml/badge.svg)](https://github.com/Fiki-io/anxdoid/actions/workflows/build.yml)
 
 **Anxdoid** adalah proyek eksperimental tingkat lanjut untuk menjalankan ROM Android AOSP ARM64 sekunder secara *live* dan *native* di dalam aplikasi Android unprivileged (non-root sandbox `untrusted_app`).
 
