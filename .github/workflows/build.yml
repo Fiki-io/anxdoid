@@ -23,13 +23,10 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Set up Android SDK & NDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK (r26c) & CMake
+      - name: Accept SDK Licenses and Install NDK
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
 
       - name: Make Gradlew Executable
         run: chmod +x gradlew
@@ -52,13 +49,10 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Set up Android SDK & NDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK (r26c), CMake, and QEMU-user
+      - name: Accept SDK Licenses, Install NDK and QEMU
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
           sudo apt-get update
           sudo apt-get install -y qemu-user-static binfmt-support
 
