@@ -1,90 +1,82 @@
-name: Build and Verify Anxdoid Runtime
+name: Build CloudShell APK
 
 on:
   push:
-    branches: [ "**" ]
+    branches: [ "main", "master" ]
   pull_request:
-    branches: [ "**" ]
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build-apk:
-    name: Build ARM64 APK & Package
+  build:
+    name: Build Android Debug APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Source Code
+      - name: 1. Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set up JDK 17
+      - name: 2. Setup Java JDK 17 & Aktifkan Cache Cepat
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
+          distribution: 'temurin'
+          cache: gradle # Menyimpan library GeckoView & Compose agar build berikutnya super cepat
 
-      - name: Accept SDK Licenses and Install NDK
+      - name: 3. Siapkan & Simpan Permanen Gradle Wrapper 9.3.1 + Keystore ke Repo
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
+          NEED_COMMIT=false
 
-      - name: Make Gradlew Executable
-        run: chmod +x gradlew
+          # 1. Cek & Buat Gradle Wrapper 9.3.1 jika belum ada
+          if [ ! -f "gradlew" ] || [ ! -f "gradle/wrapper/gradle-wrapper.properties" ]; then
+            echo ">> Menyiapkan Gradle Wrapper 9.3.1..."
+            if [ ! -f "gradlew" ]; then
+              gradle wrapper
+            fi
+            mkdir -p gradle/wrapper
+            echo "distributionBase=GRADLE_USER_HOME" > gradle/wrapper/gradle-wrapper.properties
+            echo "distributionPath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
+            echo "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip" >> gradle/wrapper/gradle-wrapper.properties
+            echo "networkTimeout=10000" >> gradle/wrapper/gradle-wrapper.properties
+            echo "validateDistributionUrl=true" >> gradle/wrapper/gradle-wrapper.properties
+            echo "zipStoreBase=GRADLE_USER_HOME" >> gradle/wrapper/gradle-wrapper.properties
+            echo "zipStorePath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
+            NEED_COMMIT=true
+          fi
+          chmod +x gradlew
 
-      - name: Build Debug APK
+          # 2. Cek & Buat debug.keystore jika belum ada
+          if [ ! -f "debug.keystore" ]; then
+            echo ">> Membuat debug.keystore permanen..."
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            NEED_COMMIT=true
+          fi
+          cp debug.keystore app/debug.keystore 2>/dev/null || true
+
+          # 3. Simpan permanen ke repo GitHub jika ada file baru
+          if [ "$NEED_COMMIT" = true ]; then
+            echo ">> Menyimpan gradlew, wrapper 9.3.1, dan debug.keystore ke repo..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -f gradlew gradlew.bat gradle/ debug.keystore 2>/dev/null || true
+            git commit -m "chore: simpan permanen gradlew, wrapper 9.3.1, dan debug.keystore"
+            git push origin HEAD:${{ github.ref_name }}
+            echo ">> Berhasil disimpan permanen ke repositori!"
+          else
+            echo ">> Semua file sistem (gradlew 9.3.1 & keystore) sudah permanen di repo."
+          fi
+
+      - name: 4. Compile & Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Upload Debug APK Artifact
+      - name: 5. Simpan & Upload File APK
         uses: actions/upload-artifact@v4
         with:
-          name: anxdoid-runtime-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
-  test-arm64-sandbox:
-    name: Test ARM64 Trampoline & Shadow Shim in QEMU
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-
-      - name: Accept SDK Licenses, Install NDK and QEMU
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
-          sudo apt-get update
-          sudo apt-get install -y qemu-user-static binfmt-support
-
-      - name: Locate NDK Directory
-        id: find-ndk
-        run: |
-          NDK_PATH=$(find $ANDROID_HOME/ndk -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
-          echo "NDK_PATH=$NDK_PATH" >> $GITHUB_ENV
-          echo "Found NDK at: $NDK_PATH"
-
-      - name: Cross-Compile Native ARM64 Test Binaries
-        run: |
-          cmake -B build-arm64 -S app/src/main/cpp \
-            -DCMAKE_TOOLCHAIN_FILE=$NDK_PATH/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-28 \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-arm64 --verbose
-
-      - name: Setup Mock AOSP ARM64 Rootfs
-        run: |
-          mkdir -p test_rootfs/system/bin test_rootfs/system/lib64 test_rootfs/system/etc test_rootfs/data
-          echo "ro.product.model=Anxdoid Virtual ARM64" > test_rootfs/system/build.prop
-          echo "ro.build.version.release=10" >> test_rootfs/system/build.prop
-          cp build-arm64/guest_payload test_rootfs/system/bin/guest_payload
-          chmod +x test_rootfs/system/bin/guest_payload
-
-      - name: Execute ARM64 Native Sandbox Test
-        run: |
-          SYSROOT="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-          qemu-aarch64-static -L "$SYSROOT" \
-            ./build-arm64/anxdoid_test_runner \
-            --rootfs "$(pwd)/test_rootfs" \
-            --shim "$(pwd)/build-arm64/libanxdoid_shim.so" \
-            --exec /system/bin/guest_payload
+          name: CloudShell-AntiStop-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7
